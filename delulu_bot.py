@@ -1,14 +1,14 @@
 import os
 import sys
+import requests
 from datetime import datetime
-from openai import OpenAI
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 from pyfiglet import figlet_format
 
-CONFIG_FILE = ".delulu_config"
 console = Console()
+CONFIG_FILE = ".delulu_config"
 
 
 # ---------------- CONFIG ---------------- #
@@ -17,24 +17,131 @@ def save_api_key(key):
     with open(CONFIG_FILE, "w") as f:
         f.write(key.strip())
 
-
 def load_api_key():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r") as f:
             return f.read().strip()
     return None
 
-
 def clear():
-    os.system("clear" if os.name == "posix" else "cls")
+    os.system("clear")
 
 
-# ---------------- UI ---------------- #
+# ---------------- OPENAI REQUEST ---------------- #
 
-def status_badge(api_key):
-    if api_key:
-        return "[bold green]● API Key Configured[/bold green]"
-    return "[bold red]● API Key Not Set[/bold red]"
+def ask_openai(api_key, messages):
+    url = "https://api.openai.com/v1/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "model": "gpt-4o-mini",
+        "messages": messages
+    }
+
+    response = requests.post(url, headers=headers, json=data)
+    result = response.json()
+
+    return result["choices"][0]["message"]["content"]
+
+
+# ---------------- CHAT ---------------- #
+
+def run_chat(api_key):
+    clear()
+    console.print(Panel.fit(
+        "[bold green]Chat Mode[/bold green]\n"
+        "Commands: /clear /new /history /save /exit",
+        border_style="green"
+    ))
+
+    conversation = [{"role": "system", "content": "You are Delulu Bot."}]
+
+    while True:
+        user = Prompt.ask("[bold yellow]You")
+        cmd = user.lower().strip()
+
+        if cmd == "/exit":
+            break
+
+        if cmd == "/clear":
+            clear()
+            continue
+
+        if cmd == "/new":
+            conversation = [{"role": "system", "content": "You are Delulu Bot."}]
+            console.print("[cyan]New chat started.[/cyan]")
+            continue
+
+        if cmd == "/history":
+            for msg in conversation:
+                if msg["role"] != "system":
+                    console.print(f"[green]{msg['role']}:[/green] {msg['content']}")
+            continue
+
+        if cmd == "/save":
+            filename = f"delulu_chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            with open(filename, "w") as f:
+                for msg in conversation:
+                    if msg["role"] != "system":
+                        f.write(f"{msg['role']}: {msg['content']}\n")
+            console.print(f"[cyan]Saved as {filename}[/cyan]")
+            continue
+
+        conversation.append({"role": "user", "content": user})
+
+        with console.status("[green]Delulu is thinking..."):
+            reply = ask_openai(api_key, conversation)
+
+        console.print(Panel(reply, title="Delulu", border_style="cyan"))
+
+        conversation.append({"role": "assistant", "content": reply})
+
+
+# ---------------- MAIN ---------------- #
+
+def main():
+    while True:
+        clear()
+        banner = figlet_format("Delulu Bot", font="slant")
+        console.print(f"[bold cyan]{banner}[/bold cyan]")
+
+        api_key = load_api_key()
+        status = "[green]● API Configured[/green]" if api_key else "[red]● API Not Set[/red]"
+        console.print(Panel(status, border_style="blue"))
+
+        console.print(Panel(
+            "[1] Run Chat\n"
+            "[2] Set API Key\n"
+            "[3] Exit",
+            title="Main Menu",
+            border_style="magenta"
+        ))
+
+        choice = Prompt.ask("Select option")
+
+        if choice == "1":
+            if not api_key:
+                console.print("[red]API key required.[/red]")
+                input("Press Enter...")
+            else:
+                run_chat(api_key)
+
+        elif choice == "2":
+            key = Prompt.ask("Enter API Key", password=True)
+            save_api_key(key)
+            console.print("[green]API Key saved.[/green]")
+            input("Press Enter...")
+
+        elif choice == "3":
+            sys.exit()
+
+
+if __name__ == "__main__":
+    main()    return "[bold red]● API Key Not Set[/bold red]"
 
 
 def show_menu(api_key):
