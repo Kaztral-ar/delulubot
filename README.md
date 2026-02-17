@@ -1,30 +1,49 @@
-# Delulu Bot 🤖
+# Project Overview
+This project is a chatbot designed to provide automated responses and support for users. It aims to enhance user experience by utilizing natural language processing (NLP) techniques.
 
-A CLI-based AI chatbot with colored UI and command mode.
+# Features
+- Intelligent responses through NLP
+- Multi-language support
+- User-friendly interface
+- Integration with various messaging platforms
 
-## Features
-- Clean menu system
-- API key status indicator
-- Command mode inside chat
-- Save conversation to file
-- View chat history
-- Rich colored UI
+# Installation Instructions
+1. Clone this repository: `git clone https://github.com/Kaztral-ar/delulubot`
+2. Navigate to the project directory: `cd delulubot`
+3. Install dependencies: `npm install`
 
-## Installation
+# Usage Guide
+To start the chatbot, run the following command:
+```bash
+npm start
+```
 
-git clone <your-repo>
-cd delulu-bot
-pip install -r requirements.txt
+# Commands
+The chatbot supports various commands:
+- `help`: Get a list of available commands.
+- `status`: Check the current status of the chatbot.
 
-## Run
+# Configuration
+Configuration settings can be adjusted in the `config.json` file. Ensure to provide the correct API keys for any third-party integrations.
 
-python delulu_bot.py
+# Architecture
+The chatbot is built using a client-server architecture:
+- **Client:** The user interface that interacts with users.
+- **Server:** The backend that handles user requests and processes responses.
 
-## Chat Commands
+# Troubleshooting
+- If the bot is not responding, ensure that you have a stable internet connection.
+- Check the logs for any error messages that could indicate issues.
 
-/clear  
-/new  
-/history  
-/save  
-/help  
-/exit
+# Dependencies
+- Node.js
+- Express
+- Body-parser
+
+# Privacy Information
+User data is collected only for the purpose of enhancing the chatbot experience. All data is handled in compliance with privacy regulations.
+
+# Future Enhancements
+- Support for voice commands
+- Enhanced NLP capabilities
+- More integrations with external APIs
