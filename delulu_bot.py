@@ -1,233 +1,171 @@
+from __future__ import annotations
+
 import os
 import sys
-import requests
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from typing import List, TypedDict
+
+from openai import OpenAI
+from openai import APIConnectionError, APIError, AuthenticationError, RateLimitError
+from pyfiglet import figlet_format
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
-from pyfiglet import figlet_format
 
 console = Console()
-CONFIG_FILE = ".delulu_config"
+CONFIG_FILE = Path(".delulu_config")
+SYSTEM_PROMPT = "You are Delulu Bot."
+MODEL_NAME = "gpt-4o-mini"
 
 
-# ---------------- CONFIG ---------------- #
-
-def save_api_key(key):
-    with open(CONFIG_FILE, "w") as f:
-        f.write(key.strip())
-
-def load_api_key():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f:
-            return f.read().strip()
-    return None
-
-def clear():
-    os.system("clear")
+class ChatMessage(TypedDict):
+    role: str
+    content: str
 
 
-# ---------------- OPENAI REQUEST ---------------- #
+@dataclass
+class ConfigStore:
+    """Persistent storage for CLI configuration."""
 
-def ask_openai(api_key, messages):
-    url = "https://api.openai.com/v1/chat/completions"
+    config_file: Path = CONFIG_FILE
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+    def save_api_key(self, key: str) -> None:
+        cleaned_key = key.strip()
+        if not cleaned_key:
+            raise ValueError("API key cannot be empty.")
 
-    data = {
-        "model": "gpt-4o-mini",
-        "messages": messages
-    }
+        self.config_file.write_text(cleaned_key, encoding="utf-8")
 
-    response = requests.post(url, headers=headers, json=data)
-    result = response.json()
+    def load_api_key(self) -> str | None:
+        if not self.config_file.exists():
+            return None
 
-    return result["choices"][0]["message"]["content"]
-
-
-# ---------------- CHAT ---------------- #
-
-def run_chat(api_key):
-    clear()
-    console.print(Panel.fit(
-        "[bold green]Chat Mode[/bold green]\n"
-        "Commands: /clear /new /history /save /exit",
-        border_style="green"
-    ))
-
-    conversation = [{"role": "system", "content": "You are Delulu Bot."}]
-
-    while True:
-        user = Prompt.ask("[bold yellow]You")
-        cmd = user.lower().strip()
-
-        if cmd == "/exit":
-            break
-
-        if cmd == "/clear":
-            clear()
-            continue
-
-        if cmd == "/new":
-            conversation = [{"role": "system", "content": "You are Delulu Bot."}]
-            console.print("[cyan]New chat started.[/cyan]")
-            continue
-
-        if cmd == "/history":
-            for msg in conversation:
-                if msg["role"] != "system":
-                    console.print(f"[green]{msg['role']}:[/green] {msg['content']}")
-            continue
-
-        if cmd == "/save":
-            filename = f"delulu_chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            with open(filename, "w") as f:
-                for msg in conversation:
-                    if msg["role"] != "system":
-                        f.write(f"{msg['role']}: {msg['content']}\n")
-            console.print(f"[cyan]Saved as {filename}[/cyan]")
-            continue
-
-        conversation.append({"role": "user", "content": user})
-
-        with console.status("[green]Delulu is thinking..."):
-            reply = ask_openai(api_key, conversation)
-
-        console.print(Panel(reply, title="Delulu", border_style="cyan"))
-
-        conversation.append({"role": "assistant", "content": reply})
+        api_key = self.config_file.read_text(encoding="utf-8").strip()
+        return api_key or None
 
 
-# ---------------- MAIN ---------------- #
+@dataclass
+class DeluluChatService:
+    """Handles interactions with OpenAI Chat Completions API."""
 
-def main():
-    while True:
-        clear()
-        banner = figlet_format("Delulu Bot", font="slant")
-        console.print(f"[bold cyan]{banner}[/bold cyan]")
+    api_key: str
+    model_name: str = MODEL_NAME
 
-        api_key = load_api_key()
-        status = "[green]● API Configured[/green]" if api_key else "[red]● API Not Set[/red]"
-        console.print(Panel(status, border_style="blue"))
+    def __post_init__(self) -> None:
+        self.client = OpenAI(api_key=self.api_key)
 
-        console.print(Panel(
-            "[1] Run Chat\n"
-            "[2] Set API Key\n"
-            "[3] Exit",
-            title="Main Menu",
-            border_style="magenta"
-        ))
+    def ask(self, messages: List[ChatMessage]) -> str:
+        response = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=messages,
+        )
 
-        choice = Prompt.ask("Select option")
+        reply = response.choices[0].message.content
+        if not reply:
+            raise RuntimeError("Model returned an empty response.")
 
-        if choice == "1":
-            if not api_key:
-                console.print("[red]API key required.[/red]")
-                input("Press Enter...")
-            else:
-                run_chat(api_key)
-
-        elif choice == "2":
-            key = Prompt.ask("Enter API Key", password=True)
-            save_api_key(key)
-            console.print("[green]API Key saved.[/green]")
-            input("Press Enter...")
-
-        elif choice == "3":
-            sys.exit()
+        return reply
 
 
-if __name__ == "__main__":
-    main()    return "[bold red]● API Key Not Set[/bold red]"
+@dataclass
+class DeluluBotApp:
+    config: ConfigStore
 
+    @staticmethod
+    def clear() -> None:
+        os.system("cls" if os.name == "nt" else "clear")
 
-def show_menu(api_key):
-    clear()
+    @staticmethod
+    def status_badge(api_key: str | None) -> str:
+        return "[green]● API Configured[/green]" if api_key else "[red]● API Not Set[/red]"
 
-    banner = figlet_format("Delulu Bot", font="slant")
-    console.print(f"[bold cyan]{banner}[/bold cyan]")
+    @staticmethod
+    def new_conversation() -> List[ChatMessage]:
+        return [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    console.print(Panel.fit(
-        status_badge(api_key),
-        border_style="blue"
-    ))
-
-    menu = """
-[1] Run Chat
-[2] Set / Update API Key
-[3] About
-[4] Exit
-"""
-    console.print(Panel(menu, title="Main Menu", border_style="magenta"))
-
-
-# ---------------- CHAT ---------------- #
-
-def run_chat(api_key):
-    clear()
-
-    console.print(Panel.fit(
-        "[bold green]Chat Mode[/bold green]\n"
-        "Commands: /clear  /new  /save  /history  /help  /exit",
-        border_style="green"
-    ))
-
-    client = OpenAI(api_key=api_key)
-
-    def new_conversation():
-        return [{"role": "system", "content": "You are Delulu Bot."}]
-
-    def show_history(conv):
-        console.print("\n[bold magenta]Chat History[/bold magenta]\n")
-        for msg in conv:
-            if msg["role"] == "user":
-                console.print(f"[bold yellow]You:[/bold yellow] {msg['content']}")
-            elif msg["role"] == "assistant":
-                console.print(f"[bold green]Delulu:[/bold green] {msg['content']}")
-        console.print()
-
-    def save_conversation(conv):
+    @staticmethod
+    def save_conversation(conversation: List[ChatMessage]) -> str:
         filename = f"delulu_chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-        with open(filename, "w", encoding="utf-8") as f:
-            for msg in conv:
+
+        with open(filename, "w", encoding="utf-8") as file:
+            for msg in conversation:
                 if msg["role"] == "user":
-                    f.write(f"You: {msg['content']}\n")
+                    file.write(f"You: {msg['content']}\n")
                 elif msg["role"] == "assistant":
-                    f.write(f"Delulu: {msg['content']}\n")
-        console.print(f"[bold cyan]Saved as {filename}[/bold cyan]")
+                    file.write(f"Delulu: {msg['content']}\n")
 
-    conversation = new_conversation()
+        return filename
 
-    while True:
-        user = Prompt.ask("[bold yellow]You")
-        cmd = user.lower().strip()
+    def show_menu(self, api_key: str | None) -> None:
+        self.clear()
+        banner = figlet_format("Delulu Bot", font="slant")
 
-        # ---------- COMMANDS ---------- #
-        if cmd == "/exit":
-            break
+        console.print(f"[bold cyan]{banner}[/bold cyan]")
+        console.print(Panel.fit(self.status_badge(api_key), border_style="blue"))
+        console.print(
+            Panel(
+                "[1] Run Chat\n"
+                "[2] Set / Update API Key\n"
+                "[3] About\n"
+                "[4] Exit",
+                title="Main Menu",
+                border_style="magenta",
+            )
+        )
 
-        if cmd == "/clear":
-            clear()
-            continue
+    def show_about(self) -> None:
+        self.clear()
+        console.print(
+            Panel.fit(
+                "[bold cyan]Delulu Bot v1.0[/bold cyan]\n\n"
+                "Rich CLI AI Chatbot\n"
+                "GitHub Deployable\n\n"
+                "Built with Python + OpenAI API",
+                border_style="green",
+            )
+        )
+        input("\nPress Enter to return...")
 
-        if cmd == "/new":
-            conversation = new_conversation()
-            console.print("[bold cyan]New chat started.[/bold cyan]")
-            continue
+    def run_chat(self, api_key: str) -> None:
+        self.clear()
+        console.print(
+            Panel.fit(
+                "[bold green]Chat Mode[/bold green]\n"
+                "Commands: /clear  /new  /save  /history  /help  /exit",
+                border_style="green",
+            )
+        )
 
-        if cmd == "/history":
-            show_history(conversation)
-            continue
+        chat_service = DeluluChatService(api_key=api_key)
+        conversation = self.new_conversation()
 
-        if cmd == "/save":
-            save_conversation(conversation)
-            continue
+        while True:
+            user_input = Prompt.ask("[bold yellow]You").strip()
+            if not user_input:
+                continue
 
-        if cmd == "/help":
-            console.print("""
+            command = user_input.lower()
+            if command == "/exit":
+                break
+            if command == "/clear":
+                self.clear()
+                continue
+            if command == "/new":
+                conversation = self.new_conversation()
+                console.print("[bold cyan]New chat started.[/bold cyan]")
+                continue
+            if command == "/history":
+                self.show_history(conversation)
+                continue
+            if command == "/save":
+                filename = self.save_conversation(conversation)
+                console.print(f"[bold cyan]Saved as {filename}[/bold cyan]")
+                continue
+            if command == "/help":
+                console.print(
+                    """
 [bold cyan]Available Commands:[/bold cyan]
 /clear    - Clear screen
 /new      - Start new chat
@@ -235,73 +173,82 @@ def run_chat(api_key):
 /save     - Save chat to file
 /help     - Show commands
 /exit     - Return to menu
-""")
-            continue
-        # -------------------------------- #
+"""
+                )
+                continue
 
-        conversation.append({"role": "user", "content": user})
+            conversation.append({"role": "user", "content": user_input})
 
-        with console.status("[bold green]Delulu is thinking..."):
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=conversation
-            )
+            try:
+                with console.status("[bold green]Delulu is thinking..."):
+                    reply = chat_service.ask(conversation)
+            except AuthenticationError:
+                console.print("[bold red]Authentication failed. Please verify your API key.[/bold red]")
+                conversation.pop()
+                continue
+            except RateLimitError:
+                console.print("[bold red]Rate limit exceeded. Please try again shortly.[/bold red]")
+                conversation.pop()
+                continue
+            except APIConnectionError:
+                console.print("[bold red]Network error while contacting OpenAI.[/bold red]")
+                conversation.pop()
+                continue
+            except APIError as error:
+                console.print(f"[bold red]OpenAI API error: {error}[/bold red]")
+                conversation.pop()
+                continue
+            except Exception as error:  # fallback guard for unexpected runtime errors
+                console.print(f"[bold red]Unexpected error: {error}[/bold red]")
+                conversation.pop()
+                continue
 
-        reply = response.choices[0].message.content
+            conversation.append({"role": "assistant", "content": reply})
+            console.print(Panel(reply, title="[bold green]Delulu[/bold green]", border_style="cyan"))
 
-        console.print(Panel(
-            reply,
-            title="[bold green]Delulu[/bold green]",
-            border_style="cyan"
-        ))
+    @staticmethod
+    def show_history(conversation: List[ChatMessage]) -> None:
+        console.print("\n[bold magenta]Chat History[/bold magenta]\n")
+        for msg in conversation:
+            if msg["role"] == "user":
+                console.print(f"[bold yellow]You:[/bold yellow] {msg['content']}")
+            elif msg["role"] == "assistant":
+                console.print(f"[bold green]Delulu:[/bold green] {msg['content']}")
+        console.print()
 
-        conversation.append({"role": "assistant", "content": reply})
+    def run(self) -> None:
+        while True:
+            api_key = self.config.load_api_key()
+            self.show_menu(api_key)
 
-
-# ---------------- MAIN ---------------- #
-
-def about():
-    clear()
-    console.print(Panel.fit(
-        "[bold cyan]Delulu Bot v1.0[/bold cyan]\n\n"
-        "Rich CLI AI Chatbot\n"
-        "GitHub Deployable\n\n"
-        "Built with Python + OpenAI API",
-        border_style="green"
-    ))
-    input("\nPress Enter to return...")
-
-
-def main():
-    while True:
-        api_key = load_api_key()
-        show_menu(api_key)
-
-        choice = Prompt.ask("[bold white]Select option")
-
-        if choice == "1":
-            if not api_key:
-                console.print("[bold red]API key not configured.[/bold red]")
+            choice = Prompt.ask("[bold white]Select option").strip()
+            if choice == "1":
+                if not api_key:
+                    console.print("[bold red]API key not configured.[/bold red]")
+                    input("Press Enter to continue...")
+                else:
+                    self.run_chat(api_key)
+            elif choice == "2":
+                key = Prompt.ask("Enter API Key", password=True)
+                try:
+                    self.config.save_api_key(key)
+                    console.print("[bold green]API Key saved.[/bold green]")
+                except ValueError as error:
+                    console.print(f"[bold red]{error}[/bold red]")
                 input("Press Enter to continue...")
+            elif choice == "3":
+                self.show_about()
+            elif choice == "4":
+                self.clear()
+                sys.exit(0)
             else:
-                run_chat(api_key)
+                console.print("[bold red]Invalid option.[/bold red]")
+                input("Press Enter to continue...")
 
-        elif choice == "2":
-            key = Prompt.ask("Enter API Key", password=True)
-            save_api_key(key)
-            console.print("[bold green]API Key saved.[/bold green]")
-            input("Press Enter to continue...")
 
-        elif choice == "3":
-            about()
-
-        elif choice == "4":
-            clear()
-            sys.exit()
-
-        else:
-            console.print("[bold red]Invalid option.[/bold red]")
-            input("Press Enter to continue...")
+def main() -> None:
+    app = DeluluBotApp(config=ConfigStore())
+    app.run()
 
 
 if __name__ == "__main__":
